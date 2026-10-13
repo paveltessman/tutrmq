@@ -26,7 +26,7 @@ func releaseResource(fn func(ctx context.Context) error) {
 	}
 }
 
-func spawn(ctx context.Context, id int) {
+func spawn(ctx context.Context, id int, key string) {
 	env := rmq.NewEnvironment(brokerURI, nil)
 
 	conn, err := env.NewConnection(ctx)
@@ -35,7 +35,7 @@ func spawn(ctx context.Context, id int) {
 	}
 	defer releaseResource(env.CloseConnections)
 
-	_, err = conn.Management().DeclareExchange(ctx, &rmq.FanOutExchangeSpecification{Name: xchange})
+	_, err = conn.Management().DeclareExchange(ctx, &rmq.DirectExchangeSpecification{Name: xchange})
 	if err != nil {
 		panic(err)
 	}
@@ -51,7 +51,7 @@ func spawn(ctx context.Context, id int) {
 	_, err = conn.Management().Bind(ctx, &rmq.ExchangeToQueueBindingSpecification{
 		SourceExchange:   "logs",
 		DestinationQueue: qInfo.Name(),
-		BindingKey:       "",
+		BindingKey:       key,
 	})
 	if err != nil {
 		panic(err)
@@ -80,7 +80,7 @@ func spawn(ctx context.Context, id int) {
 			payload = msg.Data[0]
 		}
 
-		log.Printf("[%d] %s", id, payload)
+		log.Printf("[%d] %s: %s", id, key, payload)
 
 		err = delivery.Accept(ctx)
 		if err != nil {
@@ -96,9 +96,9 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	for i := range 3 {
+	for i, key := range []string{"info", "warn", "error"} {
 		wg.Go(func() {
-			spawn(ctx, i)
+			spawn(ctx, i, key)
 		})
 	}
 

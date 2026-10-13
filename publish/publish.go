@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	rmq "github.com/rabbitmq/rabbitmq-amqp-go-client/pkg/rabbitmqamqp"
@@ -23,8 +23,26 @@ func releaseResource(fn func(ctx context.Context) error) {
 	}
 }
 
+func logLevel(args []string) string {
+	levels := map[string]struct{}{"info": struct{}{}, "warn": struct{}{}, "error": struct{}{}}
+	if len(args) < 2 {
+		log.Panic("Please provide log level and message")
+	}
+
+	level := args[0]
+	_, ok := levels[level]
+	if !ok {
+		log.Panic("fuk")
+	}
+	return level
+}
+
 func main() {
 	ctx := context.Background()
+
+	args := os.Args[1:]
+
+	level := logLevel(args)
 
 	env := rmq.NewEnvironment(brokerURI, nil)
 
@@ -34,41 +52,26 @@ func main() {
 	}
 	defer releaseResource(env.CloseConnections)
 
-	_, err = conn.Management().DeclareExchange(ctx, &rmq.FanOutExchangeSpecification{Name: xchange})
+	_, err = conn.Management().DeclareExchange(ctx, &rmq.DirectExchangeSpecification{Name: xchange})
 	if err != nil {
 		panic(err)
 	}
 
-	publisher, err := conn.NewPublisher(ctx, &rmq.ExchangeAddress{Exchange: xchange, Key: ""}, nil)
+	publisher, err := conn.NewPublisher(ctx, &rmq.ExchangeAddress{Exchange: xchange, Key: level}, nil)
 	if err != nil {
 		panic(err)
 	}
-
 	defer releaseResource(publisher.Close)
 
-	for {
-		var body []byte
-		fmt.Print("> ")
-		_, err := fmt.Scan(&body)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			panic(err)
-		}
-		if len(body) == 0 {
-			continue
-		}
+	body := []byte(strings.Join(args[1:], " "))
+	res, err := publisher.Publish(ctx, rmq.NewMessage(body))
+	if err != nil {
+		panic(err)
+	}
 
-		res, err := publisher.Publish(ctx, rmq.NewMessage(body))
-		if err != nil {
-			panic(err)
-		}
-
-		switch res.Outcome.(type) {
-		case *rmq.StateAccepted:
-		default:
-			log.Panicf("Unexpected outcome: %v", res.Outcome)
-		}
+	switch res.Outcome.(type) {
+	case *rmq.StateAccepted:
+	default:
+		log.Panicf("Unexpected outcome: %v", res.Outcome)
 	}
 }
