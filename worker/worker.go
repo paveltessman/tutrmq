@@ -18,7 +18,7 @@ import (
 const brokerURI = "amqp://guest:guest@localhost:5672/"
 const queueAddr = "helow"
 
-func releaseResourse(fn func(ctx context.Context) error) {
+func releaseResource(fn func(ctx context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -34,7 +34,7 @@ func spawn(ctx context.Context, id int) {
 	if err != nil {
 		panic(err)
 	}
-	defer releaseResourse(env.CloseConnections)
+	defer releaseResource(env.CloseConnections)
 
 	_, err = conn.Management().DeclareQueue(ctx, &rmq.QuorumQueueSpecification{Name: queueAddr})
 
@@ -43,7 +43,7 @@ func spawn(ctx context.Context, id int) {
 		panic(err)
 	}
 
-	defer releaseResourse(consumer.Close)
+	defer releaseResource(consumer.Close)
 
 	log.Printf(" [%d] waiting for messages", id)
 
