@@ -53,30 +53,11 @@ func releaseResource(fn func(ctx context.Context) error) {
 	}
 }
 
-func worker(ctx context.Context, id int) {
-	env := rmq.NewEnvironment(brokerURI, nil)
-
-	conn, err := env.NewConnection(ctx)
-	if err != nil {
-		panic(err)
-	}
-	defer releaseResource(env.CloseConnections)
-
-	_, err = conn.Management().DeclareQueue(ctx, &rmq.QuorumQueueSpecification{
-		Name: qName,
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	_, err = conn.Management().PurgeQueue(ctx, qName)
-	if err != nil {
-		panic(err)
-	}
+func worker(ctx context.Context, conn *rmq.AmqpConnection, workerID int) {
 
 	handler := func() rmq.ResponderHandler {
 		return func(ctx context.Context, request *amqp.Message) (*amqp.Message, error) {
-			return handleRequest(ctx, request, id)
+			return handleRequest(ctx, request, workerID)
 		}
 	}
 
@@ -89,22 +70,50 @@ func worker(ctx context.Context, id int) {
 	}
 	defer releaseResource(responder.Close)
 
-	log.Printf(" [%d] ready", id)
+	log.Printf(" [%d] ready", workerID)
 
 	<-ctx.Done()
 
-	log.Printf(" [%d] shutting down", id)
+	log.Printf(" [%d] shutting down", workerID)
+}
+
+func initQueue(ctx context.Context) (*rmq.Environment, *rmq.AmqpConnection, error) {
+	env := rmq.NewEnvironment(brokerURI, nil)
+
+	conn, err := env.NewConnection(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, err = conn.Management().DeclareQueue(ctx, &rmq.QuorumQueueSpecification{
+		Name: qName,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, err = conn.Management().PurgeQueue(ctx, qName)
+	if err != nil {
+		return nil, nil, err
+	}
+	return env, conn, nil
 }
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	env, conn, err := initQueue(ctx)
+	if err != nil {
+		panic(err)
+	}
+	defer releaseResource(env.CloseConnections)
+
 	var wg sync.WaitGroup
 
 	for i := range 3 {
 		wg.Go(func() {
-			worker(ctx, i)
+			worker(ctx, conn, i)
 		})
 	}
 

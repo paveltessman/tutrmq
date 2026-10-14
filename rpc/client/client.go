@@ -42,29 +42,8 @@ func newPayload(args []string) []int {
 	return parsed
 }
 
-func spawn(ctx context.Context, id int, n int) (int, error) {
+func spawn(ctx context.Context, requester rmq.Requester, id int, n int) (int, error) {
 	payload := []byte(strconv.Itoa(n))
-
-	env := rmq.NewEnvironment(brokerURI, nil)
-
-	conn, err := env.NewConnection(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer releaseResource(env.CloseConnections)
-
-	_, err = conn.Management().DeclareQueue(ctx, &rmq.QuorumQueueSpecification{Name: qName})
-	if err != nil {
-		return 0, err
-	}
-
-	requester, err := conn.NewRequester(ctx, &rmq.RequesterOptions{
-		RequestQueueName: qName,
-	})
-	if err != nil {
-		return 0, err
-	}
-	defer releaseResource(requester.Close)
 
 	log.Printf("[%d] requesting: %d", id, n)
 
@@ -98,13 +77,35 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	env := rmq.NewEnvironment(brokerURI, nil)
+
+	conn, err := env.NewConnection(ctx)
+	if err != nil {
+		panic(err)
+	}
+	defer releaseResource(env.CloseConnections)
+
+	_, err = conn.Management().DeclareQueue(ctx, &rmq.QuorumQueueSpecification{Name: qName})
+	if err != nil {
+		panic(err)
+	}
+
+	requester, err := conn.NewRequester(ctx, &rmq.RequesterOptions{
+		RequestQueueName: qName,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer releaseResource(requester.Close)
+
+
 	var wg sync.WaitGroup
 
 	args := newPayload(os.Args)
 
 	for i, n := range args {
 		wg.Go(func() {
-			_, err := spawn(ctx, i, n)
+			_, err := spawn(ctx, requester, i, n)
 			if err != nil {
 				log.Println(err)
 			}
