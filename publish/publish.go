@@ -23,26 +23,42 @@ func releaseResource(fn func(ctx context.Context) error) {
 	}
 }
 
-func logLevel(args []string) string {
-	levels := map[string]struct{}{"info": struct{}{}, "warn": struct{}{}, "error": struct{}{}}
-	if len(args) < 2 {
-		log.Panic("Please provide log level and message")
+type logRecord struct {
+	source string
+	level  string
+	msg    string
+}
+
+func (r *logRecord) key() string {
+	return strings.Join([]string{r.source, r.level}, ".")
+}
+
+func (r *logRecord) body() []byte {
+	return []byte(r.msg)
+}
+
+func newRecord(args []string) logRecord {
+	if len(args) < 3 {
+		log.Panic("Please provide source, log level and message")
 	}
 
-	level := args[0]
+	levels := map[string]struct{}{"info": {}, "warn": {}, "error": {}}
+
+	level := args[1]
 	_, ok := levels[level]
 	if !ok {
 		log.Panic("fuk")
 	}
-	return level
+
+	r := logRecord{source: args[0], level: level, msg: strings.Join(args[2:], " ")}
+
+	return r
 }
 
 func main() {
+	record := newRecord(os.Args[1:])
+
 	ctx := context.Background()
-
-	args := os.Args[1:]
-
-	level := logLevel(args)
 
 	env := rmq.NewEnvironment(brokerURI, nil)
 
@@ -52,19 +68,18 @@ func main() {
 	}
 	defer releaseResource(env.CloseConnections)
 
-	_, err = conn.Management().DeclareExchange(ctx, &rmq.DirectExchangeSpecification{Name: xchange})
+	_, err = conn.Management().DeclareExchange(ctx, &rmq.TopicExchangeSpecification{Name: xchange})
 	if err != nil {
 		panic(err)
 	}
 
-	publisher, err := conn.NewPublisher(ctx, &rmq.ExchangeAddress{Exchange: xchange, Key: level}, nil)
+	publisher, err := conn.NewPublisher(ctx, &rmq.ExchangeAddress{Exchange: xchange, Key: record.key()}, nil)
 	if err != nil {
 		panic(err)
 	}
 	defer releaseResource(publisher.Close)
 
-	body := []byte(strings.Join(args[1:], " "))
-	res, err := publisher.Publish(ctx, rmq.NewMessage(body))
+	res, err := publisher.Publish(ctx, rmq.NewMessage(record.body()))
 	if err != nil {
 		panic(err)
 	}

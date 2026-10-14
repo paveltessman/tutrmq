@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -26,7 +27,7 @@ func releaseResource(fn func(ctx context.Context) error) {
 	}
 }
 
-func spawn(ctx context.Context, id int, key string) {
+func spawn(ctx context.Context, keys []string) {
 	env := rmq.NewEnvironment(brokerURI, nil)
 
 	conn, err := env.NewConnection(ctx)
@@ -35,7 +36,7 @@ func spawn(ctx context.Context, id int, key string) {
 	}
 	defer releaseResource(env.CloseConnections)
 
-	_, err = conn.Management().DeclareExchange(ctx, &rmq.DirectExchangeSpecification{Name: xchange})
+	_, err = conn.Management().DeclareExchange(ctx, &rmq.TopicExchangeSpecification{Name: xchange})
 	if err != nil {
 		panic(err)
 	}
@@ -48,16 +49,20 @@ func spawn(ctx context.Context, id int, key string) {
 		panic(err)
 	}
 
-	_, err = conn.Management().Bind(ctx, &rmq.ExchangeToQueueBindingSpecification{
-		SourceExchange:   "logs",
-		DestinationQueue: qInfo.Name(),
-		BindingKey:       key,
-	})
-	if err != nil {
-		panic(err)
+	for _, key := range keys {
+		_, err = conn.Management().Bind(ctx, &rmq.ExchangeToQueueBindingSpecification{
+			SourceExchange:   "logs",
+			DestinationQueue: qInfo.Name(),
+			BindingKey:       key,
+		})
+		if err != nil {
+			panic(err)
+		}
 	}
 
-	log.Printf(" [%d] subscribed", id)
+	label := strings.Join(keys, "/")
+
+	log.Printf(" [%s] subscribed", label)
 
 	consumer, err := conn.NewConsumer(ctx, qInfo.Name(), nil)
 	if err != nil {
@@ -80,14 +85,14 @@ func spawn(ctx context.Context, id int, key string) {
 			payload = msg.Data[0]
 		}
 
-		log.Printf("[%d] %s: %s", id, key, payload)
+		log.Printf("[%s] %s", label, payload)
 
 		err = delivery.Accept(ctx)
 		if err != nil {
 			panic(err)
 		}
 	}
-	log.Printf(" [%d] shutting down", id)
+	log.Printf(" [%s] shutting down", label)
 }
 
 func main() {
@@ -96,9 +101,9 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	for i, key := range []string{"info", "warn", "error"} {
+	for _, key := range [][]string{{"kern.*"}, {"*.error"}, {"kern.error", "auth.warn"}} {
 		wg.Go(func() {
-			spawn(ctx, i, key)
+			spawn(ctx, key)
 		})
 	}
 
